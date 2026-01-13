@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz;
@@ -7,6 +9,20 @@ import 'format.dart';
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
+  static final Set<String> _loggedKeys = <String>{};
+
+  /// 同一キーのログを1回だけ出力する
+  static void _logOnce(String key, String message) {
+    if (_loggedKeys.add(key)) {
+      debugPrint(message);
+    }
+  }
+
+  /// デスクトッププラットフォームかどうかを判定
+  static bool get _isDesktopPlatform {
+    if (kIsWeb) return false;
+    return Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  }
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -54,6 +70,15 @@ class NotificationService {
   static Future<void> scheduleNotificationForMessage(model.Message message) async {
     if (message.openedAt != null) return;
 
+    // デスクトッププラットフォームでは通知スケジュールをスキップ
+    if (_isDesktopPlatform) {
+      _logOnce(
+        'notificationsScheduleSkippedDesktop',
+        '[NotificationService] デスクトッププラットフォームでは通知スケジュールをスキップします',
+      );
+      return;
+    }
+
     final openOn = message.openOn;
     final notificationTime = tz.TZDateTime(
       tz.local,
@@ -75,7 +100,7 @@ class NotificationService {
     const androidDetails = AndroidNotificationDetails(
       'after_channel',
       'After',
-      channelDescription: '封印解除の通知',
+              channelDescription: '記録が届いた通知',
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
     );
@@ -97,12 +122,22 @@ class NotificationService {
   }
 
   static Future<void> cancelNotificationForMessage(model.Message message) async {
+    if (!_initialized) return;
     final notificationId = message.id.toInt();
     await _notifications.cancel(notificationId);
   }
 
   static Future<void> scheduleNotificationsForDate(DateTime date, List<model.Message> messages) async {
     if (messages.isEmpty) return;
+
+    // デスクトッププラットフォームでは通知スケジュールをスキップ
+    if (_isDesktopPlatform) {
+      _logOnce(
+        'notificationsScheduleSkippedDesktop',
+        '[NotificationService] デスクトッププラットフォームでは通知スケジュールをスキップします',
+      );
+      return;
+    }
 
     final notificationTime = tz.TZDateTime(
       tz.local,
@@ -127,7 +162,7 @@ class NotificationService {
     const androidDetails = AndroidNotificationDetails(
       'after_channel',
       'After',
-      channelDescription: '封印解除の通知',
+              channelDescription: '記録が届いた通知',
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
     );
@@ -149,6 +184,7 @@ class NotificationService {
   }
 
   static Future<void> cancelNotificationForDate(DateTime date) async {
+    if (!_initialized) return;
     final notificationId = date.hashCode % 2147483647;
     await _notifications.cancel(notificationId);
   }
