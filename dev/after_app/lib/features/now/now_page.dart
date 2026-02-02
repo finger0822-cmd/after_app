@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/format.dart';
+import '../../core/crash_logger.dart';
+import '../sealed/sealed_controller.dart';
 import 'now_controller.dart';
 
 class NowPage extends ConsumerStatefulWidget {
@@ -52,15 +54,38 @@ class _NowPageState extends ConsumerState<NowPage> {
 
   Future<void> _handleSubmit() async {
     final text = _textController.text;
-    if (text.trim().isEmpty) return;
+    final trimmed = text.trim();
+    CrashLogger.logDebug(
+      '[NowPage] submit tapped rawLen=${text.length} trimmedLen=${trimmed.length}',
+    );
+    if (trimmed.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('メッセージを入力してください')));
+      return;
+    }
 
     final controller = ref.read(nowControllerProvider.notifier);
     await controller.submit(text);
 
     final state = ref.read(nowControllerProvider);
-    if (state.submitStatus == SubmitStatus.success && mounted) {
+    if (!mounted) return;
+    if (state.submitStatus == SubmitStatus.success) {
       _textController.clear();
       _focusNode.requestFocus();
+      ref.read(sealedControllerProvider.notifier).loadMessages();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('保存しました（封印中に反映されます）')));
+      controller.resetStatus();
+      return;
+    }
+    if (state.submitStatus == SubmitStatus.failure) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(state.errorMessage ?? '保存できませんでした')),
+      );
+      controller.resetStatus();
     }
   }
 
@@ -103,7 +128,6 @@ class _NowPageState extends ConsumerState<NowPage> {
                   hintText: 'メッセージを入力',
                   border: OutlineInputBorder(),
                 ),
-                onSubmitted: (_) => _handleSubmit(),
               ),
               const SizedBox(height: 16),
               InkWell(
@@ -129,7 +153,8 @@ class _NowPageState extends ConsumerState<NowPage> {
               ),
               const Spacer(),
               ElevatedButton(
-                onPressed: (state.isSubmitting || _textController.text.trim().isEmpty)
+                onPressed:
+                    (state.isSubmitting || _textController.text.trim().isEmpty)
                     ? null
                     : _handleSubmit,
                 style: ElevatedButton.styleFrom(
@@ -151,4 +176,3 @@ class _NowPageState extends ConsumerState<NowPage> {
     );
   }
 }
-

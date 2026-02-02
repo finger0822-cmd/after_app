@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,19 +8,19 @@ import '../../core/format.dart';
 import '../../core/time.dart';
 import '../../core/crash_logger.dart';
 import '../now/now_controller.dart';
+import '../../core/dust_particle.dart';
+import '../../core/dust_particle_helpers.dart' as dust_helpers;
+import '../../widgets/dust_disintegration.dart';
 import 'calendar_controller.dart';
 
 /// NowSheetの送信結果
-enum SubmitResult {
-  success,
-  failed,
-}
+enum SubmitResult { success, failed }
 
 /// NowSheetのUI状態（状態遷移を単純化）
 enum NowSheetUiState {
-  input,      // 入力中
+  input, // 入力中
   submitting, // 送信中
-  sent,       // 送信成功（Windows用）
+  sent, // 送信成功（Windows用）
 }
 
 class NowSheet extends ConsumerStatefulWidget {
@@ -31,7 +32,8 @@ class NowSheet extends ConsumerStatefulWidget {
   final BuildContext? overlayContext; // CalendarPage側のcontext（Overlay取得用）
   final Future<void> Function()? absorbAnimator; // テスト用：吸い込みアニメーションを注入可能にする
   final Future<void> Function()? fallbackRunner; // テスト用：フォールバックアニメーションをspy可能にする
-  final void Function(String heroTag, String previewText)? onPrepareAbsorb; // Hero受け皿を準備するコールバック
+  final void Function(String heroTag, String previewText)?
+  onPrepareAbsorb; // Hero受け皿を準備するコールバック
 
   const NowSheet({
     super.key,
@@ -50,7 +52,8 @@ class NowSheet extends ConsumerStatefulWidget {
   ConsumerState<NowSheet> createState() => _NowSheetState();
 }
 
-class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMixin {
+class _NowSheetState extends ConsumerState<NowSheet>
+    with TickerProviderStateMixin {
   final _textController = TextEditingController();
   final _focusNode = FocusNode();
   final _composerKey = GlobalKey();
@@ -98,7 +101,8 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     super.didUpdateWidget(oldWidget);
     // sessionIdが変わったら状態をリセット（ビルド完了後に実行）
     // 多重実行を防ぐため、最後に実行したsessionIdと比較
-    if (oldWidget.sessionId != widget.sessionId && _lastResetWidgetSessionId != widget.sessionId) {
+    if (oldWidget.sessionId != widget.sessionId &&
+        _lastResetWidgetSessionId != widget.sessionId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _lastResetWidgetSessionId != widget.sessionId) {
           _resetUI();
@@ -113,7 +117,7 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     _sentResetTimer?.cancel();
     _sentResetTimer = null;
     CrashLogger.logDebug('[NowSheet] dispose: _sentResetTimer cancelled');
-    
+
     // OverlayEntryが残っている場合は削除
     _currentOverlayEntry?.remove();
     _currentOverlayEntry = null;
@@ -127,16 +131,22 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
   void _resetUI() {
     // 多重実行を防ぐため、既に同じwidget.sessionIdで実行済みの場合はスキップ
     if (_lastResetWidgetSessionId == widget.sessionId) {
-      debugPrint('[NowSheet] resetUI: skipped (already reset for sessionId=${widget.sessionId})');
+      debugPrint(
+        '[NowSheet] resetUI: skipped (already reset for sessionId=${widget.sessionId})',
+      );
       return;
     }
-    
+
     // resetUI呼び出しごとに新しいsessionIdを生成（ログ用）
     _lastResetSessionId = DateTime.now().microsecondsSinceEpoch;
     _lastResetWidgetSessionId = widget.sessionId; // 実行済みsessionIdを記録
-    debugPrint('[NowSheet] resetUI: START sessionId=$_lastResetSessionId (widget.sessionId=${widget.sessionId})');
-    debugPrint('[NowSheet] resetUI: process alive check - ${DateTime.now().toIso8601String()}');
-    
+    debugPrint(
+      '[NowSheet] resetUI: START sessionId=$_lastResetSessionId (widget.sessionId=${widget.sessionId})',
+    );
+    debugPrint(
+      '[NowSheet] resetUI: process alive check - ${DateTime.now().toIso8601String()}',
+    );
+
     try {
       // 既存のOverlayEntryを削除
       if (_currentOverlayEntry != null) {
@@ -147,40 +157,48 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         }
         _currentOverlayEntry = null;
       }
-      
+
       // アニメーションフラグをリセット
       _absorbingToken = null;
       _hideOriginalMessage = false;
       _isAbsorbingLocal = false;
       _uiState = NowSheetUiState.input;
-      
+
       // テキスト入力を空にする
       _textController.clear();
-      
+
       // プレビューをリセット
       _previewText = null;
-      
+
       // TextFieldを再生成するためにkeyをリセット
       _textFieldKey = 0;
-      
+
       // NowControllerの状態をリセット
       ref.read(nowControllerProvider.notifier).resetStatus();
-      
+
       // 日付を初期値に戻す（今日+7日）
       final today = TimeUtils.today();
       final defaultOpenOn = TimeUtils.addDays(today, 7);
-      final initialDate = widget.initialOpenOn.isBefore(today) ? defaultOpenOn : widget.initialOpenOn;
-      ref.read(nowControllerProvider.notifier).updateDate(TimeUtils.toDateOnly(initialDate));
-      
+      final initialDate = widget.initialOpenOn.isBefore(today)
+          ? defaultOpenOn
+          : widget.initialOpenOn;
+      ref
+          .read(nowControllerProvider.notifier)
+          .updateDate(TimeUtils.toDateOnly(initialDate));
+
       // フォーカスを設定
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _focusNode.requestFocus();
         }
       });
-      
-      debugPrint('[NowSheet] resetUI: COMPLETED sessionId=$_lastResetSessionId');
-      debugPrint('[NowSheet] resetUI: process still alive - ${DateTime.now().toIso8601String()}');
+
+      debugPrint(
+        '[NowSheet] resetUI: COMPLETED sessionId=$_lastResetSessionId',
+      );
+      debugPrint(
+        '[NowSheet] resetUI: process still alive - ${DateTime.now().toIso8601String()}',
+      );
     } catch (e, stack) {
       debugPrint('[NowSheet] resetUI: ERROR - $e');
       debugPrint('[NowSheet] resetUI: ERROR stack - $stack');
@@ -208,20 +226,24 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         await Future.delayed(const Duration(milliseconds: 50));
         final rect = _globalRectOf(widget.targetKey!);
         if (rect != null && rect.width > 0 && rect.height > 0) {
-          debugPrint('[absorb] targetRect obtained from targetKey (attempt ${i + 1}): $rect');
+          debugPrint(
+            '[absorb] targetRect obtained from targetKey (attempt ${i + 1}): $rect',
+          );
           return rect;
         }
       }
     }
-    
+
     // 既に取得済みのRectがあれば使用
-    if (widget.todayCellRect != null && 
-        widget.todayCellRect!.width > 0 && 
+    if (widget.todayCellRect != null &&
+        widget.todayCellRect!.width > 0 &&
         widget.todayCellRect!.height > 0) {
-      debugPrint('[absorb] targetRect from todayCellRect: ${widget.todayCellRect}');
+      debugPrint(
+        '[absorb] targetRect from todayCellRect: ${widget.todayCellRect}',
+      );
       return widget.todayCellRect;
     }
-    
+
     // todayCellKeyから取得を試みる
     if (widget.todayCellKey != null) {
       for (int i = 0; i < maxRetries; i++) {
@@ -230,12 +252,14 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         await Future.delayed(const Duration(milliseconds: 50));
         final rect = _globalRectOf(widget.todayCellKey!);
         if (rect != null && rect.width > 0 && rect.height > 0) {
-          debugPrint('[absorb] targetRect obtained from todayCellKey (attempt ${i + 1}): $rect');
+          debugPrint(
+            '[absorb] targetRect obtained from todayCellKey (attempt ${i + 1}): $rect',
+          );
           return rect;
         }
       }
     }
-    
+
     return null;
   }
 
@@ -248,7 +272,7 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
   }) async {
     // tokenは_runAbsorbAndCloseで既に設定済み（ここではチェック不要）
     debugPrint('[absorb] start, token=$token');
-    
+
     // 既存のOverlayEntryを確実に削除
     if (_currentOverlayEntry != null) {
       try {
@@ -259,7 +283,7 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       }
       _currentOverlayEntry = null;
     }
-    
+
     // Overlayを取得
     OverlayState? overlay;
     debugPrint('[absorb] getting overlay, mounted=$mounted');
@@ -271,117 +295,229 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       final overlayCtx = widget.overlayContext ?? context;
       debugPrint('[absorb] calling Overlay.of');
       overlay = Overlay.of(overlayCtx, rootOverlay: true);
-      debugPrint('[absorb] Overlay.of succeeded, overlay=${overlay != null}');
+      debugPrint('[absorb] Overlay.of succeeded, overlay=$overlay');
     } catch (e, stack) {
       debugPrint('[absorb] overlay error: $e');
       debugPrint('[absorb] overlay error stack: $stack');
     }
-    
+
     if (overlay == null) {
       debugPrint('[absorb] fallback: overlay is null');
       // フォールバックは呼び出し元で処理（ここではfalseを返す）
       return false;
     }
-    
+
     // Overlayのサイズを取得
     final screenSize = MediaQuery.of(context).size;
     debugPrint('[absorb] overlaySize: $screenSize');
-    
+
     // targetRect取得（リトライヘルパーを使用）
     final targetRect = await _getTargetRectWithRetry(maxRetries: 5);
-    
+
     debugPrint('[absorb] originRect: $originRect');
-    
-    if (targetRect == null || targetRect.width == 0 || targetRect.height == 0) {
-      debugPrint('[absorb] fallback: targetRect invalid');
-      // フォールバックは呼び出し元で処理（ここではfalseを返す）
-      return false;
+
+    Rect resolvedTargetRect =
+        targetRect ??
+        Rect.fromCenter(
+          center: Offset(screenSize.width / 2, screenSize.height / 2),
+          width: 1,
+          height: 1,
+        );
+    if (resolvedTargetRect.width == 0 || resolvedTargetRect.height == 0) {
+      debugPrint('[absorb] fallback: targetRect invalid, using screen center');
+      resolvedTargetRect = Rect.fromCenter(
+        center: Offset(screenSize.width / 2, screenSize.height / 2),
+        width: 1,
+        height: 1,
+      );
     }
-    
-    debugPrint('[absorb] targetRect: $targetRect');
-    
+
+    debugPrint('[absorb] targetRect: $resolvedTargetRect');
+
     // rootOverlay: trueを使っている場合、global座標をそのまま使用
     // OverlayEntryのPositionedは、OverlayのStack内での相対座標を使用する
     // originRectとtargetRectはglobal座標なので、そのまま使用
     // ただし、targetRectの中心ではなく、targetRectの左上隅から中心へのオフセットを計算
     final originCenter = originRect.center;
-    final targetCenter = targetRect.center;
-    
+    final emitCenter = Offset(
+      originCenter.dx.clamp(0.0, screenSize.width),
+      originCenter.dy.clamp(0.0, screenSize.height),
+    );
+    final targetCenter = resolvedTargetRect.center;
+
     debugPrint('[absorb] originRect: $originRect (global)');
-    debugPrint('[absorb] targetRect: $targetRect (global)');
+    debugPrint('[absorb] targetRect: $resolvedTargetRect (global)');
     debugPrint('[absorb] originCenter: $originCenter (global)');
     debugPrint('[absorb] targetCenter: $targetCenter (global)');
-    debugPrint('[absorb] originWidth: ${originRect.width}, originHeight: ${originRect.height}');
-    debugPrint('[absorb] targetWidth: ${targetRect.width}, targetHeight: ${targetRect.height}');
-    debugPrint('[absorb] startLeft: ${originRect.left}, startTop: ${originRect.top}');
-    debugPrint('[absorb] endLeft: ${targetRect.left}, endTop: ${targetRect.top}');
-    
+    debugPrint(
+      '[absorb] originWidth: ${originRect.width}, originHeight: ${originRect.height}',
+    );
+    debugPrint(
+      '[absorb] targetWidth: ${resolvedTargetRect.width}, targetHeight: ${resolvedTargetRect.height}',
+    );
+    debugPrint(
+      '[absorb] startLeft: ${originRect.left}, startTop: ${originRect.top}',
+    );
+    debugPrint(
+      '[absorb] endLeft: ${resolvedTargetRect.left}, endTop: ${resolvedTargetRect.top}',
+    );
+
     final controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 180),
+      duration: const Duration(seconds: 4),
     );
-    
-    final curve = CurvedAnimation(parent: controller, curve: Curves.easeInOutCubic);
+
+    final curve = CurvedAnimation(
+      parent: controller,
+      curve: Curves.easeInOutCubic,
+    );
     // 中心座標ではなく、左上隅の座標でアニメーション
     final originTopLeft = Offset(originRect.left, originRect.top);
-    final targetTopLeft = Offset(targetRect.left, targetRect.top);
-    final pos = Tween<Offset>(begin: originTopLeft, end: targetTopLeft).animate(curve);
+    final targetTopLeft = Offset(
+      resolvedTargetRect.left,
+      resolvedTargetRect.top,
+    );
+    final pos = Tween<Offset>(
+      begin: originTopLeft,
+      end: targetTopLeft,
+    ).animate(curve);
     final scale = Tween<double>(begin: 1.0, end: 0.15).animate(curve);
     final fade = Tween<double>(begin: 1.0, end: 0.0).animate(curve);
-    
+
+    final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+    const particleCount = 12000;
+    List<DustParticle> particles =
+        await dust_helpers.DustParticleGenerator.generateFromTextRaster(
+          text: previewText,
+          textRect: originRect,
+          textColor: Colors.white,
+          particleCount: particleCount,
+          devicePixelRatio: devicePixelRatio,
+        );
+
+    if (particles.isEmpty) {
+      final rand = math.Random();
+      final gridSize = math.sqrt(particleCount).ceil();
+      const double spacing = 2.0;
+      particles = <DustParticle>[];
+      for (int i = 0; i < particleCount; i++) {
+        final col = i % gridSize;
+        final row = i ~/ gridSize;
+        final baseOffset = Offset(
+          (col - gridSize / 2) * spacing,
+          (row - gridSize / 2) * spacing,
+        );
+        final jitter = Offset(
+          (rand.nextDouble() - 0.5) * spacing,
+          (rand.nextDouble() - 0.5) * spacing,
+        );
+        final angle = rand.nextDouble() * 2 * math.pi;
+        final speed = (rand.nextDouble() * rand.nextDouble()) * 750.0;
+        particles.add(
+          DustParticle(
+            position: emitCenter + baseOffset + jitter,
+            velocity: Offset(
+              math.cos(angle) * speed * 0.1,
+              math.sin(angle) * speed * 0.1,
+            ),
+            size: 0.6 + rand.nextDouble() * 1.2,
+            noiseOffset: rand.nextDouble() * 10000,
+          ),
+        );
+      }
+    }
+
+    var lastElapsed = Duration.zero;
+    controller.addListener(() {
+      final size = MediaQuery.of(context).size;
+      final elapsed = controller.lastElapsedDuration ?? Duration.zero;
+      var dt = (elapsed - lastElapsed).inMicroseconds / 1000000.0;
+      if (dt <= 0) {
+        dt = 1.0 / 60.0;
+      } else if (dt > 1.0 / 30.0) {
+        dt = 1.0 / 30.0;
+      }
+      lastElapsed = elapsed;
+      for (final p in particles) {
+        _updateAbsorbParticle(p, controller.value, dt, size);
+      }
+    });
+
+    final cleanupCompleter = Completer<void>();
+    var cleanupScheduled = false;
+
     late OverlayEntry entry;
     entry = OverlayEntry(
       opaque: false,
       builder: (_) {
         // Overlay内はStack + Positionedで配置し、clipBehavior: Clip.noneを明示
-        return Stack(
-          clipBehavior: Clip.none, // clip回避
-          children: [
-            AnimatedBuilder(
-              animation: controller,
-              builder: (_, __) {
-                // pos.valueは左上隅の座標なので、そのまま使用
-                // ただし、スケール時に中心を基準にするため、中心座標を計算
-                final currentLeft = pos.value.dx;
-                final currentTop = pos.value.dy;
-                
-                // デバッグ用ログ（最初と中間、最後のフレーム）
-                if (controller.value == 0.0) {
-                  debugPrint('[absorb] first frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}');
-                } else if (controller.value == 0.5) {
-                  debugPrint('[absorb] mid frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}');
-                } else if (controller.value == 1.0) {
-                  debugPrint('[absorb] last frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}');
-                }
-                
-                return Positioned(
-                  left: currentLeft,
-                  top: currentTop,
+        return SizedBox.expand(
+          child: Stack(
+            clipBehavior: Clip.none, // clip回避
+            children: [
+              AnimatedBuilder(
+                animation: controller,
+                builder: (_, __) => Positioned.fill(
                   child: IgnorePointer(
-                    child: Opacity(
-                      opacity: fade.value,
-                      child: Transform.scale(
-                        scale: scale.value,
-                        alignment: Alignment.center,
-                        child: _buildOverlayWidget(previewText),
+                    child: CustomPaint(
+                      painter: DustParticlePainter(
+                        particles: particles,
+                        progress: controller.value,
+                        repaint: controller,
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-          ],
+                ),
+              ),
+              AnimatedBuilder(
+                animation: controller,
+                builder: (_, __) {
+                  // pos.valueは左上隅の座標なので、そのまま使用
+                  // ただし、スケール時に中心を基準にするため、中心座標を計算
+                  final currentLeft = pos.value.dx;
+                  final currentTop = pos.value.dy;
+
+                  // デバッグ用ログ（最初と中間、最後のフレーム）
+                  if (controller.value == 0.0) {
+                    debugPrint(
+                      '[absorb] first frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                    );
+                  } else if (controller.value == 0.5) {
+                    debugPrint(
+                      '[absorb] mid frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                    );
+                  } else if (controller.value == 1.0) {
+                    debugPrint(
+                      '[absorb] last frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                    );
+                  }
+
+                  return Positioned(
+                    left: currentLeft,
+                    top: currentTop,
+                    child: IgnorePointer(
+                      child: Opacity(
+                        opacity: fade.value,
+                        child: Transform.scale(
+                          scale: scale.value,
+                          alignment: Alignment.center,
+                          child: _buildOverlayWidget(previewText),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         );
       },
     );
-    
-    // AnimationControllerでOverlayを必ず再描画させる
-    controller.addListener(() {
-      entry.markNeedsBuild();
-    });
-    
-    controller.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
+
+    controller.addStatusListener((status) async {
+      if (status == AnimationStatus.completed && !cleanupScheduled) {
+        cleanupScheduled = true;
+        await Future.delayed(const Duration(seconds: 1));
         debugPrint('[absorb] animation status: completed');
         try {
           entry.remove();
@@ -397,10 +533,13 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         } catch (e) {
           debugPrint('[absorb] error clearing isAbsorbing: $e');
         }
+        if (!cleanupCompleter.isCompleted) {
+          cleanupCompleter.complete();
+        }
         // アニメーション完了時はpopされるので、_hideOriginalMessageはそのまま（pop後にリセット）
       }
     });
-    
+
     _currentOverlayEntry = entry;
     debugPrint('[absorb] inserting overlay entry, mounted=$mounted');
     if (!mounted) {
@@ -415,7 +554,7 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       debugPrint('[absorb] overlay insert error stack: $stack');
       return false;
     }
-    
+
     debugPrint('[absorb] starting animation forward, mounted=$mounted');
     if (!mounted) {
       debugPrint('[absorb] not mounted, cannot start animation');
@@ -423,11 +562,17 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     }
     try {
       await controller.forward();
+      if (!cleanupCompleter.isCompleted) {
+        await cleanupCompleter.future;
+      }
       debugPrint('[absorb] animation completed');
       return true;
     } catch (e, stack) {
       debugPrint('[absorb] animation error: $e');
       debugPrint('[absorb] animation error stack: $stack');
+      if (!cleanupCompleter.isCompleted) {
+        cleanupCompleter.complete();
+      }
       return false;
     } finally {
       // finallyで必ずtokenをリセット（例外でも戻す）
@@ -442,7 +587,9 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         // CalendarPage側のisAbsorbingを解除
         try {
           ref.read(calendarControllerProvider.notifier).stopAbsorbing();
-          debugPrint('[absorb] CalendarPage: isAbsorbing set to false (in finally)');
+          debugPrint(
+            '[absorb] CalendarPage: isAbsorbing set to false (in finally)',
+          );
         } catch (e) {
           debugPrint('[absorb] error clearing isAbsorbing in finally: $e');
         }
@@ -461,18 +608,18 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
   /// フォールバックアニメーション（フェード+軽い縮小）
   Future<void> _playFallbackAnimation() async {
     debugPrint('[absorb] fallback start');
-    
+
     // テスト用のfallbackRunnerが注入されている場合はそれを使用
     if (widget.fallbackRunner != null) {
       await widget.fallbackRunner!();
       return;
     }
-    
+
     final controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 180),
     );
-    
+
     try {
       await controller.forward();
       debugPrint('[absorb] fallback completed');
@@ -509,17 +656,13 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         children: [
           Text(
             'この気持ちは、',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              height: 1.8,
-            ),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.8),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
             '未来のあなたに預けられました。',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              height: 1.8,
-            ),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.8),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
@@ -550,26 +693,12 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     return Material(
       color: Colors.transparent,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          minWidth: 120,
-          minHeight: 32,
-        ),
+        constraints: const BoxConstraints(minWidth: 120, minHeight: 32),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.red.withOpacity(0.6), // デバッグ用：必ず見える色
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: Colors.red,
-              width: 2, // デバッグ用：太いボーダー
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
           ),
           child: Text(
             text,
@@ -586,19 +715,43 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     );
   }
 
+  void _updateAbsorbParticle(
+    DustParticle particle,
+    double t,
+    double dt,
+    Size size,
+  ) {
+    // 一回だけ弾ける挙動に固定（吸い込みの再加速を行わない）
+    if (t < 0.2) {
+      particle.update(t, dt, size);
+      return;
+    }
+    final safeDt = dt.isFinite && dt > 0 ? dt : 1.0 / 60.0;
+    final dtSec = safeDt.clamp(0.0, 1.0 / 30.0);
+    particle.velocity =
+        particle.velocity * math.pow(0.9, dtSec * 60.0).toDouble();
+    particle.position += particle.velocity * dtSec;
+    final fadeT = ((t - 0.2) / 0.8).clamp(0.0, 1.0);
+    particle.opacity = (1.0 - fadeT).clamp(0.0, 1.0);
+  }
+
   /// 吸い込み処理を1箇所に集約（成功時に呼ばれる）
-  Future<void> _runAbsorbAndClose(String previewText) async {
+  Future<void> _runAbsorbAndClose(
+    String previewText, {
+    bool allowPop = true,
+  }) async {
     // 同一成功イベントでの二重起動を防止するためのtokenを生成
-    final token = '${DateTime.now().microsecondsSinceEpoch}_${widget.sessionId}';
-    
+    final token =
+        '${DateTime.now().microsecondsSinceEpoch}_${widget.sessionId}';
+
     // 既に同じtokenで実行中の場合はスキップ
     if (_absorbingToken == token) {
       debugPrint('[absorb] already running with same token, skipping');
       return;
     }
-    
+
     debugPrint('[absorb] willStart, token=$token');
-    
+
     // カレンダーを更新（アニメーション前に実行）
     try {
       ref.read(calendarControllerProvider.notifier).refresh();
@@ -618,19 +771,21 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
 
     // 現在のフレームが完了するまで待つ（プレビュー表示を確実にする）
     await SchedulerBinding.instance.endOfFrame;
-    
+
     if (!mounted) return;
-    
+
     // originRectを取得（元UIを消す前）
     // _previewKeyは動的キーに変更したため、_composerKeyから取得する
     final screenSize = MediaQuery.of(context).size;
-    Rect originRect = _globalRectOf(_composerKey) ?? Rect.fromLTWH(
-      (screenSize.width - 280) / 2,
-      screenSize.height * 0.3,
-      280,
-      56,
-    );
-    
+    Rect originRect =
+        _globalRectOf(_composerKey) ??
+        Rect.fromLTWH(
+          (screenSize.width - 280) / 2,
+          screenSize.height * 0.3,
+          280,
+          56,
+        );
+
     if (originRect.width == 0 || originRect.height == 0) {
       // フォールバック：画面中央付近に固定の矩形
       debugPrint('[absorb] originRect invalid, using fallback');
@@ -644,19 +799,21 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     } else {
       debugPrint('[absorb] originRect: $originRect');
     }
-    
+
     // Phase 2: ガードを確認してからoriginal UI hidden（吸い込み開始が確定してから）
     // 既に実行中の場合はスキップ（同一成功イベントでの二重起動防止）
     if (_absorbingToken != null) {
-      debugPrint('[absorb] already absorbing with token=$_absorbingToken, skipping');
+      debugPrint(
+        '[absorb] already absorbing with token=$_absorbingToken, skipping',
+      );
       // スキップ時はフォールバックを実行
       await _runFallbackAndClose();
       return;
     }
-    
+
     // ガード確定：tokenを設定（吸い込み開始が確定）
     _absorbingToken = token;
-    
+
     // CalendarPage側の当日セル表示を抑止
     try {
       ref.read(calendarControllerProvider.notifier).startAbsorbing();
@@ -664,14 +821,14 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     } catch (e) {
       debugPrint('[absorb] error setting isAbsorbing: $e');
     }
-    
+
     // Phase 2.5: originRect取得後・Overlay挿入前に元UIを完全に非表示
     // 1. Focusを外す（TextFieldの再描画/カーソル点滅を止める）
     if (mounted) {
       FocusScope.of(context).unfocus();
       debugPrint('[absorb] focus unfocused');
     }
-    
+
     // 2. setStateでisAbsorbingLocalをtrueに設定（必ずNowSheetState内で実行）
     if (mounted) {
       setState(() {
@@ -679,21 +836,25 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         _isAbsorbingLocal = true;
       });
       // setState直後に値を確認
-      debugPrint('[absorb] isAbsorbingLocal set to true (current value: $_isAbsorbingLocal)');
+      debugPrint(
+        '[absorb] isAbsorbingLocal set to true (current value: $_isAbsorbingLocal)',
+      );
       debugPrint('[absorb] original UI hidden (before overlay insertion)');
     }
-    
+
     // 3. フレームが完了するまで待つ（UIが完全に非表示になるまで）
     // 安全のため2フレーム待つ
     await SchedulerBinding.instance.endOfFrame;
     await SchedulerBinding.instance.endOfFrame;
     debugPrint('[absorb] 2 frames completed after hiding UI');
-    
+
     // フレーム待機後に_isAbsorbingLocalがtrueであることを確認
     if (mounted) {
-      debugPrint('[absorb] after frames: _isAbsorbingLocal=$_isAbsorbingLocal (should be true)');
+      debugPrint(
+        '[absorb] after frames: _isAbsorbingLocal=$_isAbsorbingLocal (should be true)',
+      );
     }
-    
+
     // Phase 3: Overlayアニメーションを開始
     if (!mounted) {
       // mountedでない場合はフラグを戻して終了
@@ -711,19 +872,19 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       }
       return;
     }
-    
+
     try {
       debugPrint('[absorb] overlay insertion starting');
-      
+
       // 4. overlayをinsertしてアニメーション開始
       final success = await _playAbsorbAnimation(
         previewText: previewText,
         originRect: originRect,
         token: token,
       );
-      
+
       debugPrint('[absorb] animation completed, success=$success');
-      
+
       // 5. アニメーションが失敗した場合はフォールバック
       if (!success) {
         await _runFallbackAndClose();
@@ -743,23 +904,25 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
             _hideOriginalMessage = false;
             _isAbsorbingLocal = false;
           });
-        setState(() {
-          _hideOriginalMessage = false;
-          _isAbsorbingLocal = false;
-        });
-        
-          if (!mounted) return;
-          Navigator.of(context).pop(SubmitResult.failed);
+          setState(() {
+            _hideOriginalMessage = false;
+            _isAbsorbingLocal = false;
+          });
+
+          if (allowPop) {
+            if (!mounted) return;
+            Navigator.of(context).pop(SubmitResult.failed);
+          }
         } catch (e, stack) {
           debugPrint('[NowSheet] pop error: $e');
           debugPrint('[NowSheet] pop error stack: $stack');
         }
         return;
       }
-      
+
       // 6. overlay cleanup完了後にpop（フレーム競合を避ける）
       await SchedulerBinding.instance.endOfFrame;
-      
+
       // 7. popで結果を返す（遷移は呼び出し元で処理）
       if (!mounted) return;
       try {
@@ -776,9 +939,11 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
           _hideOriginalMessage = false;
           _isAbsorbingLocal = false;
         });
-        
-        if (!mounted) return;
-        Navigator.of(context).pop(SubmitResult.success);
+
+        if (allowPop) {
+          if (!mounted) return;
+          Navigator.of(context).pop(SubmitResult.success);
+        }
       } catch (e, stack) {
         debugPrint('[NowSheet] pop error: $e');
         debugPrint('[NowSheet] pop error stack: $stack');
@@ -800,9 +965,11 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
           _hideOriginalMessage = false;
           _isAbsorbingLocal = false;
         });
-          
+
+        if (allowPop) {
           if (!mounted) return;
           Navigator.of(context).pop(SubmitResult.failed);
+        }
       } catch (e2, stack) {
         debugPrint('[NowSheet] pop error: $e2');
         debugPrint('[NowSheet] pop error stack: $stack');
@@ -828,10 +995,14 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       // CalendarPage側のisAbsorbingも解除
       try {
         ref.read(calendarControllerProvider.notifier).stopAbsorbing();
-        debugPrint('[absorb] CalendarPage: isAbsorbing set to false (in finally)');
+        debugPrint(
+          '[absorb] CalendarPage: isAbsorbing set to false (in finally)',
+        );
       } catch (e, stack) {
         debugPrint('[absorb] error clearing isAbsorbing in finally: $e');
-        debugPrint('[absorb] error clearing isAbsorbing stack in finally: $stack');
+        debugPrint(
+          '[absorb] error clearing isAbsorbing stack in finally: $stack',
+        );
       }
       debugPrint('[absorb] finally block completed');
     }
@@ -848,10 +1019,10 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         });
         await SchedulerBinding.instance.endOfFrame;
       }
-      
+
       // フォールバックアニメーションを実行（150-220ms）
       await _playFallbackAnimation();
-      
+
       // cleanup完了後にpop
       await SchedulerBinding.instance.endOfFrame;
     } catch (e) {
@@ -869,7 +1040,9 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
       // CalendarPage側のisAbsorbingを解除
       try {
         ref.read(calendarControllerProvider.notifier).stopAbsorbing();
-        debugPrint('[absorb] CalendarPage: isAbsorbing set to false (fallback)');
+        debugPrint(
+          '[absorb] CalendarPage: isAbsorbing set to false (fallback)',
+        );
       } catch (e) {
         debugPrint('[absorb] error clearing isAbsorbing in fallback: $e');
       }
@@ -879,12 +1052,16 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
   /// 送信成功後に入力欄・プレビュー・ドラフト状態をクリアする（Navigator操作に依存しない）
   void _clearComposerAfterSuccess() {
     final sessionId = DateTime.now().microsecondsSinceEpoch;
-    CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: START sessionId=$sessionId');
-    
+    CrashLogger.logDebug(
+      '[NowSheet] _clearComposerAfterSuccess: START sessionId=$sessionId',
+    );
+
     // 1. controller.clear() を実行
     _textController.clear();
-    CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: textController cleared sessionId=$sessionId');
-    
+    CrashLogger.logDebug(
+      '[NowSheet] _clearComposerAfterSuccess: textController cleared sessionId=$sessionId',
+    );
+
     // 2. preview / draft state を null にする
     // 3. setState で再描画（TextFieldのkeyを変更して再生成を強制）
     if (mounted) {
@@ -895,23 +1072,38 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
         // _uiStateは呼び出し元で管理（Windowsの場合はsent、Androidの場合はabsorb処理）
         _textFieldKey++; // TextFieldを再生成するためにkeyを変更
       });
-      CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: preview state cleared, textFieldKey=$_textFieldKey sessionId=$sessionId');
+      CrashLogger.logDebug(
+        '[NowSheet] _clearComposerAfterSuccess: preview state cleared, textFieldKey=$_textFieldKey sessionId=$sessionId',
+      );
     } else {
-      CrashLogger.logInfo('[NowSheet] _clearComposerAfterSuccess: not mounted, skipping setState sessionId=$sessionId');
+      CrashLogger.logInfo(
+        '[NowSheet] _clearComposerAfterSuccess: not mounted, skipping setState sessionId=$sessionId',
+      );
     }
-    
+
     // 4. キーボードを閉じる
     if (mounted) {
       try {
-        CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: BEFORE unfocus() sessionId=$sessionId');
+        CrashLogger.logDebug(
+          '[NowSheet] _clearComposerAfterSuccess: BEFORE unfocus() sessionId=$sessionId',
+        );
         FocusScope.of(context).unfocus();
-        CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: AFTER unfocus() sessionId=$sessionId');
+        CrashLogger.logDebug(
+          '[NowSheet] _clearComposerAfterSuccess: AFTER unfocus() sessionId=$sessionId',
+        );
       } catch (e, stack) {
-        CrashLogger.logException(e, stack, context: 'NowSheet _clearComposerAfterSuccess unfocus error sessionId=$sessionId');
+        CrashLogger.logException(
+          e,
+          stack,
+          context:
+              'NowSheet _clearComposerAfterSuccess unfocus error sessionId=$sessionId',
+        );
       }
     }
-    
-    CrashLogger.logDebug('[NowSheet] _clearComposerAfterSuccess: COMPLETED sessionId=$sessionId');
+
+    CrashLogger.logDebug(
+      '[NowSheet] _clearComposerAfterSuccess: COMPLETED sessionId=$sessionId',
+    );
   }
 
   Future<void> _selectDate(BuildContext context) async {
@@ -920,9 +1112,11 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     final today = TimeUtils.today();
     final firstDate = today;
     final lastDate = DateTime(today.year + 10, 12, 31);
-    
+
     // initialDateがfirstDateより前の場合は、firstDateを使用
-    final initialDate = currentDate.isBefore(firstDate) ? firstDate : currentDate;
+    final initialDate = currentDate.isBefore(firstDate)
+        ? firstDate
+        : currentDate;
 
     final picked = await showDatePicker(
       context: context,
@@ -940,10 +1134,12 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     // 監査用: unique sessionIdとtimestampを生成
     final submitSessionId = DateTime.now().microsecondsSinceEpoch;
     final submitTimestamp = DateTime.now().toIso8601String();
-    
+
     // 二重送信ガード（早期リターン）
     if (_isSubmitting) {
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: BLOCKED (already submitting) source=$source sessionId=$submitSessionId');
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: BLOCKED (already submitting) source=$source sessionId=$submitSessionId',
+      );
       return;
     }
 
@@ -952,16 +1148,24 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
       // ノイズ削減のため、stackTraceを出さず簡潔なログのみ
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: BLOCKED (empty text) source=$source sessionId=$submitSessionId len=${text.length} trimLen=${trimmedText.length}');
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: BLOCKED (empty text) source=$source sessionId=$submitSessionId len=${text.length} trimLen=${trimmedText.length}',
+      );
       return;
     }
 
     // 正常な送信開始時のみ詳細ログ（状態ログ＋StackTrace）
     final stackTrace = StackTrace.current;
     final stackLines = stackTrace.toString().split('\n').take(10).join('\n');
-    CrashLogger.logDebug('[NowSheet] _handleSubmit called source=$source sessionId=$submitSessionId timestamp=$submitTimestamp');
-    CrashLogger.logDebug('[NowSheet] _handleSubmit stackTrace (first 10 lines):\n$stackLines');
-    CrashLogger.logDebug('[NowSheet] _handleSubmit state: _isSubmitting=$_isSubmitting mounted=$mounted uiState=$_uiState');
+    CrashLogger.logDebug(
+      '[NowSheet] _handleSubmit called source=$source sessionId=$submitSessionId timestamp=$submitTimestamp',
+    );
+    CrashLogger.logDebug(
+      '[NowSheet] _handleSubmit stackTrace (first 10 lines):\n$stackLines',
+    );
+    CrashLogger.logDebug(
+      '[NowSheet] _handleSubmit state: _isSubmitting=$_isSubmitting mounted=$mounted uiState=$_uiState',
+    );
 
     // エラー表示をリセット
     ref.read(nowControllerProvider.notifier).resetStatus();
@@ -969,108 +1173,151 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
     // 送信開始：ロックを設定
     _isSubmitting = true;
     _updateUiState(NowSheetUiState.submitting, sessionId: submitSessionId);
-    CrashLogger.logDebug('[NowSheet] _handleSubmit: START submitting source=$source sessionId=$submitSessionId');
-    
+    CrashLogger.logDebug(
+      '[NowSheet] _handleSubmit: START submitting source=$source sessionId=$submitSessionId',
+    );
+
     try {
       final controller = ref.read(nowControllerProvider.notifier);
       await controller.submit(text, sessionId: submitSessionId);
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: submit() completed sessionId=$submitSessionId');
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: submit() completed sessionId=$submitSessionId',
+      );
     } catch (e, stack) {
-      CrashLogger.logException(e, stack, context: 'NowSheet _handleSubmit submit error sessionId=$submitSessionId');
-      rethrow;
-    } finally {
-      // 送信完了：ロックを解除（_isSubmittingはUI更新ではないのでmountedチェック不要）
+      CrashLogger.logException(
+        e,
+        stack,
+        context:
+            'NowSheet _handleSubmit submit error sessionId=$submitSessionId',
+      );
       _isSubmitting = false;
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: _isSubmitting reset to false sessionId=$submitSessionId');
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: submit error, _isSubmitting reset sessionId=$submitSessionId',
+      );
+      rethrow;
     }
 
     // 状態を確認
     final state = ref.read(nowControllerProvider);
-    
-    CrashLogger.logDebug('[NowSheet] _handleSubmit: submitStatus=${state.submitStatus} sessionId=$submitSessionId');
-    
+
+    CrashLogger.logDebug(
+      '[NowSheet] _handleSubmit: submitStatus=${state.submitStatus} sessionId=$submitSessionId',
+    );
+
     if (state.submitStatus == SubmitStatus.success && mounted) {
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: SUCCESS sessionId=$submitSessionId');
-      
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: SUCCESS sessionId=$submitSessionId',
+      );
+
       // submit成功直後に共通クリア処理を実行（Navigator操作に依存しない位置）
       _clearComposerAfterSuccess();
-      
-      // Windows DesktopではNavigator操作を完全にやめて、NowSheet内の状態遷移だけで完結
-      // 理由：Navigator.pop直後に Lost connection が発生するため
-      if (Platform.isWindows) {
-        CrashLogger.logDebug('[NowSheet] Windows: Navigator operations disabled, using local state transition sessionId=$submitSessionId');
-        
-        // カレンダーを更新（Isarトランザクション完了を待つ）
-        try {
-          CrashLogger.logDebug('[NowSheet] Windows: BEFORE refresh() call sessionId=$submitSessionId');
-          await ref.read(calendarControllerProvider.notifier).refresh();
-          CrashLogger.logDebug('[NowSheet] Windows: refresh() COMPLETED sessionId=$submitSessionId');
-        } catch (e, stack) {
-          CrashLogger.logException(e, stack, context: 'NowSheet Windows refresh error sessionId=$submitSessionId');
-        }
-        
-        // 送信成功UIを表示（Navigator操作は一切行わない）
-        if (!mounted) {
-          CrashLogger.logInfo('[NowSheet] Windows: not mounted before showing sent UI sessionId=$submitSessionId');
-          return;
-        }
-        
-        _updateUiState(NowSheetUiState.sent, sessionId: submitSessionId);
-        CrashLogger.logDebug('[NowSheet] Windows: sent UI shown sessionId=$submitSessionId');
-        
-        // 既存のタイマーをキャンセル（二重起動防止）
-        _sentResetTimer?.cancel();
-        _sentResetTimer = null;
-        CrashLogger.logDebug('[NowSheet] Windows: existing timer cancelled (if any) sessionId=$submitSessionId');
-        
-        // 2.5秒後に自動的にリセットして入力画面へ戻す（思考が「手放した」ことを認識するのに必要な時間）
-        _sentResetTimer = Timer(const Duration(milliseconds: 2500), () {
-          _onSentResetTimer(sessionId: submitSessionId);
-        });
-        CrashLogger.logDebug('[NowSheet] Windows: _sentResetTimer started (2500ms) sessionId=$submitSessionId');
+
+      // 吸い込み演出は全プラットフォームで必ず実行
+      final allowPop = !Platform.isWindows;
+      await _runAbsorbAndClose(text.trim(), allowPop: allowPop);
+      if (allowPop) {
+        _isSubmitting = false;
+        CrashLogger.logDebug(
+          '[NowSheet] _handleSubmit: absorb done, _isSubmitting reset sessionId=$submitSessionId',
+        );
         return;
       }
-      
-      // iOS / Android では現状のabsorb演出を保持
-      // 吸い込み処理を1箇所に集約
-      await _runAbsorbAndClose(text.trim());
+
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: Navigator operations disabled, using local state transition sessionId=$submitSessionId',
+      );
+
+      // 送信成功UIを表示（Navigator操作は一切行わない）
+      if (!mounted) {
+        CrashLogger.logInfo(
+          '[NowSheet] Windows: not mounted before showing sent UI sessionId=$submitSessionId',
+        );
+        return;
+      }
+
+      _updateUiState(NowSheetUiState.sent, sessionId: submitSessionId);
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: sent UI shown sessionId=$submitSessionId',
+      );
+
+      // 既存のタイマーをキャンセル（二重起動防止）
+      _sentResetTimer?.cancel();
+      _sentResetTimer = null;
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: existing timer cancelled (if any) sessionId=$submitSessionId',
+      );
+
+      // 2.5秒後に自動的にリセットして入力画面へ戻す（思考が「手放した」ことを認識するのに必要な時間）
+      _sentResetTimer = Timer(const Duration(milliseconds: 2500), () {
+        _onSentResetTimer(sessionId: submitSessionId);
+      });
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: _sentResetTimer started (2500ms) sessionId=$submitSessionId',
+      );
+      _isSubmitting = false;
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: Windows sent UI shown, _isSubmitting reset sessionId=$submitSessionId',
+      );
+      return;
     } else if (state.submitStatus == SubmitStatus.failure) {
-      CrashLogger.logDebug('[NowSheet] _handleSubmit: FAILURE sessionId=$submitSessionId');
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: FAILURE sessionId=$submitSessionId',
+      );
       // 失敗時はUIにエラーメッセージが表示される（何もしない）
       if (mounted) {
         _updateUiState(NowSheetUiState.input, sessionId: submitSessionId);
       }
+      _isSubmitting = false;
+      CrashLogger.logDebug(
+        '[NowSheet] _handleSubmit: failure, _isSubmitting reset sessionId=$submitSessionId',
+      );
     }
   }
 
   /// Windows用：送信成功後のリセットタイマーコールバック（dispose後setState防止）
   void _onSentResetTimer({required int sessionId}) {
     final timerStartTime = DateTime.now();
-    CrashLogger.logDebug('[NowSheet] Windows: _onSentResetTimer STARTED sessionId=$sessionId timestamp=${timerStartTime.toIso8601String()}');
-    
+    CrashLogger.logDebug(
+      '[NowSheet] Windows: _onSentResetTimer STARTED sessionId=$sessionId timestamp=${timerStartTime.toIso8601String()}',
+    );
+
     if (!mounted) {
-      CrashLogger.logInfo('[NowSheet] Windows: _onSentResetTimer called after dispose sessionId=$sessionId');
+      CrashLogger.logInfo(
+        '[NowSheet] Windows: _onSentResetTimer called after dispose sessionId=$sessionId',
+      );
       return;
     }
-    
+
     // addPostFrameCallbackを削除し、Timer発火後に即状態更新（フレーム停止による遅延を回避）
     // Future(() {})で次のmicrotaskへ送る（軽量で確実な実行）
     Future(() {
       final futureStartTime = DateTime.now();
-      final timerDelay = futureStartTime.difference(timerStartTime).inMilliseconds;
-      CrashLogger.logDebug('[NowSheet] Windows: _onSentResetTimer Future callback STARTED sessionId=$sessionId timerDelay=${timerDelay}ms timestamp=${futureStartTime.toIso8601String()}');
-      
+      final timerDelay = futureStartTime
+          .difference(timerStartTime)
+          .inMilliseconds;
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: _onSentResetTimer Future callback STARTED sessionId=$sessionId timerDelay=${timerDelay}ms timestamp=${futureStartTime.toIso8601String()}',
+      );
+
       if (!mounted) {
-        CrashLogger.logInfo('[NowSheet] Windows: _onSentResetTimer Future callback called after dispose sessionId=$sessionId');
+        CrashLogger.logInfo(
+          '[NowSheet] Windows: _onSentResetTimer Future callback called after dispose sessionId=$sessionId',
+        );
         return;
       }
-      
+
       // mountedチェック済みで即状態更新（addPostFrameCallbackによる遅延を回避）
       _updateUiState(NowSheetUiState.input, sessionId: sessionId);
       final updateEndTime = DateTime.now();
-      final updateDelay = updateEndTime.difference(futureStartTime).inMilliseconds;
-      final totalDelay = updateEndTime.difference(timerStartTime).inMilliseconds;
-      CrashLogger.logDebug('[NowSheet] Windows: reset completed, back to input screen sessionId=$sessionId totalDelay=${totalDelay}ms updateDelay=${updateDelay}ms timestamp=${updateEndTime.toIso8601String()}');
+      final updateDelay = updateEndTime
+          .difference(futureStartTime)
+          .inMilliseconds;
+      final totalDelay = updateEndTime
+          .difference(timerStartTime)
+          .inMilliseconds;
+      CrashLogger.logDebug(
+        '[NowSheet] Windows: reset completed, back to input screen sessionId=$sessionId totalDelay=${totalDelay}ms updateDelay=${updateDelay}ms timestamp=${updateEndTime.toIso8601String()}',
+      );
     });
   }
 
@@ -1078,27 +1325,34 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
   /// safeSetState経由でUI更新（例外は握りつぶさない）
   void _updateUiState(NowSheetUiState newState, {required int sessionId}) {
     if (!mounted) {
-      CrashLogger.logInfo('[NowSheet] _updateUiState: not mounted, skipping state=$newState sessionId=$sessionId');
+      CrashLogger.logInfo(
+        '[NowSheet] _updateUiState: not mounted, skipping state=$newState sessionId=$sessionId',
+      );
       return;
     }
-    
+
     // safeSetState経由でUI更新（mountedチェック済み、例外は握りつぶさない）
     safeSetState(() {
       _uiState = newState;
     });
-    CrashLogger.logDebug('[NowSheet] _updateUiState: state=$newState sessionId=$sessionId');
+    CrashLogger.logDebug(
+      '[NowSheet] _updateUiState: state=$newState sessionId=$sessionId',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     // デバッグログ：buildの先頭で必ず状態を確認
-    CrashLogger.logTrace('[NowSheet] build: _isAbsorbingLocal=$_isAbsorbingLocal, _hideOriginalMessage=$_hideOriginalMessage, _uiState=$_uiState, _isSubmitting=$_isSubmitting');
-    
+    CrashLogger.logTrace(
+      '[NowSheet] build: _isAbsorbingLocal=$_isAbsorbingLocal, _hideOriginalMessage=$_hideOriginalMessage, _uiState=$_uiState, _isSubmitting=$_isSubmitting',
+    );
+
     final state = ref.watch(nowControllerProvider);
     final selectedDate = state.selectedDate;
 
     // 送信可能かどうかを判定（保守性向上のため条件を集約）
-    final canSubmit = mounted &&
+    final canSubmit =
+        mounted &&
         !_isSubmitting &&
         _uiState == NowSheetUiState.input &&
         state.submitStatus != SubmitStatus.submitting &&
@@ -1128,7 +1382,9 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
                 else if (_isAbsorbingLocal)
                   Builder(
                     builder: (context) {
-                      CrashLogger.logTrace('[NowSheet] build: inputUI/preview layer SKIPPED (isAbsorbingLocal=true)');
+                      CrashLogger.logTrace(
+                        '[NowSheet] build: inputUI/preview layer SKIPPED (isAbsorbingLocal=true)',
+                      );
                       return const SizedBox.shrink();
                     },
                   )
@@ -1142,14 +1398,18 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
                     maintainSize: false,
                     child: Builder(
                       builder: (context) {
-                        CrashLogger.logTrace('[NowSheet] build: inputUI/preview layer rendered, isAbsorbingLocal=$_isAbsorbingLocal, hideOriginalMessage=$_hideOriginalMessage, controller.text="${_textController.text}", textFieldKey=$_textFieldKey');
+                        CrashLogger.logTrace(
+                          '[NowSheet] build: inputUI/preview layer rendered, isAbsorbingLocal=$_isAbsorbingLocal, hideOriginalMessage=$_hideOriginalMessage, controller.text="${_textController.text}", textFieldKey=$_textFieldKey',
+                        );
                         // Containerのkeyも動的に変更して、確実に再生成されるようにする
                         return Container(
                           key: ValueKey('previewContainer_$_textFieldKey'),
                           child: _previewText != null
                               ? _buildPreviewWidget(_previewText!)
                               : TextField(
-                                  key: ValueKey('textField_$_textFieldKey'), // 送信成功後に再生成されるようにkeyを動的に変更
+                                  key: ValueKey(
+                                    'textField_$_textFieldKey',
+                                  ), // 送信成功後に再生成されるようにkeyを動的に変更
                                   controller: _textController,
                                   focusNode: _focusNode,
                                   style: const TextStyle(
@@ -1161,8 +1421,17 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
                                   maxLines: null,
                                   maxLength: 140,
                                   // カウンター（0/140）を物理的に消去
-                                  buildCounter: (context, {required currentLength, required isFocused, maxLength}) => null,
-                                  enabled: !_isSubmitting && _uiState != NowSheetUiState.submitting, // 送信中は無効化
+                                  buildCounter:
+                                      (
+                                        context, {
+                                        required currentLength,
+                                        required isFocused,
+                                        maxLength,
+                                      }) => null,
+                                  enabled:
+                                      !_isSubmitting &&
+                                      _uiState !=
+                                          NowSheetUiState.submitting, // 送信中は無効化
                                   decoration: const InputDecoration(
                                     // 命令的な言葉を消し、余白として機能させる
                                     hintText: '...',
@@ -1179,80 +1448,89 @@ class _NowSheetState extends ConsumerState<NowSheet> with TickerProviderStateMix
                                       setState(() {});
                                     }
                                   },
-                                  onSubmitted: (_) => _handleSubmit(source: 'textfield_enter'),
+                                  // submit is handled by the button only
                                 ),
                         );
                       },
                     ),
                   ),
                 // Windowsで送信成功UI表示中は日付選択とボタンを非表示
-                if (!(_uiState == NowSheetUiState.sent && Platform.isWindows)) ...[
-                const SizedBox(height: 16),
-                InkWell(
-                  onTap: () => _selectDate(context),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Row(
-                      children: [
-                        const Text('届く日 '),
-                        Text(
-                          FormatUtils.formatDate(selectedDate),
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        const Spacer(),
-                        const Icon(Icons.calendar_today, size: 20),
-                      ],
+                if (!(_uiState == NowSheetUiState.sent &&
+                    Platform.isWindows)) ...[
+                  const SizedBox(height: 16),
+                  InkWell(
+                    onTap: () => _selectDate(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Text('届く日 '),
+                          Text(
+                            FormatUtils.formatDate(selectedDate),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const Spacer(),
+                          const Icon(Icons.calendar_today, size: 20),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        // 送信ボタンの有効/無効は canSubmit で判定（保守性向上）
-                        onPressed: canSubmit ? () => _handleSubmit(source: 'button') : null,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        child: (_isSubmitting || state.submitStatus == SubmitStatus.submitting || _uiState == NowSheetUiState.submitting)
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : state.submitStatus == SubmitStatus.success
-                                ? const Text('保存しました')
-                                : const Text('Send to After'),
-                      ),
-                    ),
-                    if (state.submitStatus == SubmitStatus.failure && state.errorMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: Text(
-                          state.errorMessage!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.error,
+                  const SizedBox(height: 16),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          // 送信ボタンの有効/無効は canSubmit で判定（保守性向上）
+                          onPressed: canSubmit
+                              ? () => _handleSubmit(source: 'button')
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
-                          textAlign: TextAlign.center,
+                          child:
+                              (_isSubmitting ||
+                                  state.submitStatus ==
+                                      SubmitStatus.submitting ||
+                                  _uiState == NowSheetUiState.submitting)
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : state.submitStatus == SubmitStatus.success
+                              ? const Text('保存しました')
+                              : const Text('Send to After'),
                         ),
                       ),
-                  ],
-                ),
+                      if (state.submitStatus == SubmitStatus.failure &&
+                          state.errorMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Text(
+                            state.errorMessage!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
 }
-
