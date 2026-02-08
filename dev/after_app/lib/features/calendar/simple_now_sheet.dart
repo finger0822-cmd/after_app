@@ -385,20 +385,21 @@ class _SimpleNowSheetState extends ConsumerState<SimpleNowSheet>
         ) *
         0.5;
     final maxRadius = halfDiagonal * 0.98;
-    final noiseGate = 0.8;
-    const baseWobAmp = 0.03;
-    const outSpeedUp = 1.25;
-    const outEnd = 0.5;
+    final noiseGate = 0.5;
+    const baseWobAmp = 0.015;
+    const outSpeedUp = 1.2;
+    const outEnd = 0.48;
+    const blendWindow = 0.06;
     final isExpanding = t <= outEnd;
     final absorbT = ((t - outEnd) / (1.0 - outEnd)).clamp(0.0, 1.0);
-    final absorbEase = Curves.easeInCubic.transform(absorbT);
+    final absorbEase = Curves.easeInOutSine.transform(absorbT);
     for (int i = 0; i < _inkParticles.length; i++) {
       final blob = _inkParticles[i];
       final motion = _inkMotion[i];
 
       if (isExpanding) {
         final angleNoise = _softsign(motion.noise.next());
-        motion.angleVel = (motion.angleVel * 0.92) + angleNoise * 0.012;
+        motion.angleVel = (motion.angleVel * 0.88) + angleNoise * 0.01;
         motion.angle = motion.angle + motion.angleVel * dt;
       } else {
         motion.angleVel = 0.0;
@@ -411,11 +412,12 @@ class _SimpleNowSheetState extends ConsumerState<SimpleNowSheet>
       final burstT = (t / (outEnd / outSpeedUp)).clamp(0.0, 1.0);
       // 拡散の終端で速度が0になるカーブ
       final expandEase = Curves.easeOutCubic.transform(burstT);
-      final rFactor = isExpanding
-          ? expandEase
-          : (1.0 - absorbEase).clamp(0.0, 1.0);
-      final wobAmp = isExpanding ? baseWobAmp : 0.0;
-      final noise = isExpanding ? _softsign(motion.noise.next()) : 0.0;
+      final blendT = ((t - outEnd) / blendWindow).clamp(0.0, 1.0);
+      final expandFactor = expandEase * (1.0 - blendT);
+      final absorbFactor = (1.0 - absorbEase).clamp(0.0, 1.0) * blendT;
+      final rFactor = expandFactor + absorbFactor;
+      final wobAmp = baseWobAmp * (1.0 - blendT);
+      final noise = _softsign(motion.noise.next()) * (1.0 - blendT);
       final distAtten =
           ((motion.position - _inkCenter!).distance / (maxRadius * 0.18)).clamp(
             0.0,
