@@ -48,7 +48,17 @@ class SealedController extends StateNotifier<SealedState> {
     if (message == null || message.openedAt != null || message.dateChangeUsed) {
       return false;
     }
-    message.openOn = TimeUtils.toDateOnly(newDate);
+    final original = message.openOn;
+    message.openOn = DateTime(
+      newDate.year,
+      newDate.month,
+      newDate.day,
+      original.hour,
+      original.minute,
+      original.second,
+      original.millisecond,
+      original.microsecond,
+    );
     message.dateChangeUsed = true;
 
     await NotificationService.cancelNotificationForMessage(message);

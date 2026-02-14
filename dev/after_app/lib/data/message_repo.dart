@@ -9,8 +9,6 @@ class MessageRepo {
 
   Future<void> create(Message message, {int? sessionId}) async {
     final isar = await _isar;
-    // openOnをdateOnlyで正規化して保存
-    message.openOn = TimeUtils.toDateOnly(message.openOn);
     await isar.writeTxn(() => isar.messages.put(message));
     // 監査用: DB保存後のログ（実害確認用）
     final auditSessionId = sessionId ?? DateTime.now().microsecondsSinceEpoch;
@@ -66,28 +64,23 @@ class MessageRepo {
   Future<List<Message>> getSealedMessages() async {
     final isar = await _isar;
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return await isar.messages
+    final allSealed = await isar.messages
         .filter()
         .openedAtIsNull()
-        .openOnGreaterThan(today.subtract(const Duration(days: 1)))
         .findAll();
+    return allSealed.where((msg) => msg.openOn.isAfter(now)).toList();
   }
 
   Future<void> openMessagesDueToday() async {
     final isar = await _isar;
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
-
     final allSealed = await isar.messages
         .filter()
         .openedAtIsNull()
         .findAll();
     
     final messages = allSealed.where((msg) {
-      final msgDate = DateTime(msg.openOn.year, msg.openOn.month, msg.openOn.day);
-      return msgDate.isAtSameMomentAs(today) || (msgDate.isAfter(today) && msgDate.isBefore(tomorrow));
+      return !msg.openOn.isAfter(now);
     }).toList();
 
     if (messages.isEmpty) return;

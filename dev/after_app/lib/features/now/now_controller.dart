@@ -92,7 +92,7 @@ class NowController extends StateNotifier<NowState> {
       final message = Message.create(
         messageId: _uuid.v4(),
         text: text.trim(),
-        openOn: TimeUtils.toDateOnly(state.selectedDate),
+        openOn: state.selectedDate,
         createdAt: DateTime.now(),
       );
 

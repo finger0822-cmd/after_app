@@ -8,9 +8,6 @@ import '../../core/format.dart';
 import '../../core/time.dart';
 import '../../core/crash_logger.dart';
 import '../now/now_controller.dart';
-import '../../core/dust_particle.dart';
-import '../../core/dust_particle_helpers.dart' as dust_helpers;
-import '../../widgets/dust_disintegration.dart';
 import 'calendar_controller.dart';
 
 /// NowSheetの送信結果
@@ -377,71 +374,8 @@ class _NowSheetState extends ConsumerState<NowSheet>
       resolvedTargetRect.left,
       resolvedTargetRect.top,
     );
-    final pos = Tween<Offset>(
-      begin: originTopLeft,
-      end: targetTopLeft,
-    ).animate(curve);
-    final scale = Tween<double>(begin: 1.0, end: 0.15).animate(curve);
+    final pos = AlwaysStoppedAnimation<Offset>(originTopLeft);
     final fade = Tween<double>(begin: 1.0, end: 0.0).animate(curve);
-
-    final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
-    const particleCount = 12000;
-    List<DustParticle> particles =
-        await dust_helpers.DustParticleGenerator.generateFromTextRaster(
-          text: previewText,
-          textRect: originRect,
-          textColor: Colors.white,
-          particleCount: particleCount,
-          devicePixelRatio: devicePixelRatio,
-        );
-
-    if (particles.isEmpty) {
-      final rand = math.Random();
-      final gridSize = math.sqrt(particleCount).ceil();
-      const double spacing = 2.0;
-      particles = <DustParticle>[];
-      for (int i = 0; i < particleCount; i++) {
-        final col = i % gridSize;
-        final row = i ~/ gridSize;
-        final baseOffset = Offset(
-          (col - gridSize / 2) * spacing,
-          (row - gridSize / 2) * spacing,
-        );
-        final jitter = Offset(
-          (rand.nextDouble() - 0.5) * spacing,
-          (rand.nextDouble() - 0.5) * spacing,
-        );
-        final angle = rand.nextDouble() * 2 * math.pi;
-        final speed = (rand.nextDouble() * rand.nextDouble()) * 750.0;
-        particles.add(
-          DustParticle(
-            position: emitCenter + baseOffset + jitter,
-            velocity: Offset(
-              math.cos(angle) * speed * 0.1,
-              math.sin(angle) * speed * 0.1,
-            ),
-            size: 0.6 + rand.nextDouble() * 1.2,
-            noiseOffset: rand.nextDouble() * 10000,
-          ),
-        );
-      }
-    }
-
-    var lastElapsed = Duration.zero;
-    controller.addListener(() {
-      final size = MediaQuery.of(context).size;
-      final elapsed = controller.lastElapsedDuration ?? Duration.zero;
-      var dt = (elapsed - lastElapsed).inMicroseconds / 1000000.0;
-      if (dt <= 0) {
-        dt = 1.0 / 60.0;
-      } else if (dt > 1.0 / 30.0) {
-        dt = 1.0 / 30.0;
-      }
-      lastElapsed = elapsed;
-      for (final p in particles) {
-        _updateAbsorbParticle(p, controller.value, dt, size);
-      }
-    });
 
     final cleanupCompleter = Completer<void>();
     var cleanupScheduled = false;
@@ -457,20 +391,6 @@ class _NowSheetState extends ConsumerState<NowSheet>
             children: [
               AnimatedBuilder(
                 animation: controller,
-                builder: (_, __) => Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: DustParticlePainter(
-                        particles: particles,
-                        progress: controller.value,
-                        repaint: controller,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              AnimatedBuilder(
-                animation: controller,
                 builder: (_, __) {
                   // pos.valueは左上隅の座標なので、そのまま使用
                   // ただし、スケール時に中心を基準にするため、中心座標を計算
@@ -480,15 +400,15 @@ class _NowSheetState extends ConsumerState<NowSheet>
                   // デバッグ用ログ（最初と中間、最後のフレーム）
                   if (controller.value == 0.0) {
                     debugPrint(
-                      '[absorb] first frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                      '[absorb] first frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}',
                     );
                   } else if (controller.value == 0.5) {
                     debugPrint(
-                      '[absorb] mid frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                      '[absorb] mid frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}',
                     );
                   } else if (controller.value == 1.0) {
                     debugPrint(
-                      '[absorb] last frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}, scale=${scale.value}',
+                      '[absorb] last frame: pos=${pos.value}, left=$currentLeft, top=$currentTop, opacity=${fade.value}',
                     );
                   }
 
@@ -498,11 +418,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
                     child: IgnorePointer(
                       child: Opacity(
                         opacity: fade.value,
-                        child: Transform.scale(
-                          scale: scale.value,
-                          alignment: Alignment.center,
-                          child: _buildOverlayWidget(previewText),
-                        ),
+                        child: _buildOverlayWidget(previewText),
                       ),
                     ),
                   );
@@ -605,7 +521,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
     }
   }
 
-  /// フォールバックアニメーション（フェード+軽い縮小）
+  /// フォールバックアニメーション（フェードのみ）
   Future<void> _playFallbackAnimation() async {
     debugPrint('[absorb] fallback start');
 
@@ -635,14 +551,15 @@ class _NowSheetState extends ConsumerState<NowSheet>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.black,
+        border: Border.all(color: Colors.white24),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         text,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 14),
+        style: const TextStyle(fontSize: 14, color: Colors.white),
       ),
     );
   }
@@ -690,49 +607,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
 
   /// Overlay用のWidgetを構築（デバッグモード：必ず見える形）
   Widget _buildOverlayWidget(String text) {
-    return Material(
-      color: Colors.transparent,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 120, minHeight: 32),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.white, // デバッグ用：白固定
-              fontWeight: FontWeight.bold, // デバッグ用：太字
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _updateAbsorbParticle(
-    DustParticle particle,
-    double t,
-    double dt,
-    Size size,
-  ) {
-    // 一回だけ弾ける挙動に固定（吸い込みの再加速を行わない）
-    if (t < 0.2) {
-      particle.update(t, dt, size);
-      return;
-    }
-    final safeDt = dt.isFinite && dt > 0 ? dt : 1.0 / 60.0;
-    final dtSec = safeDt.clamp(0.0, 1.0 / 30.0);
-    particle.velocity =
-        particle.velocity * math.pow(0.9, dtSec * 60.0).toDouble();
-    particle.position += particle.velocity * dtSec;
-    final fadeT = ((t - 0.2) / 0.8).clamp(0.0, 1.0);
-    particle.opacity = (1.0 - fadeT).clamp(0.0, 1.0);
+    return const SizedBox.shrink();
   }
 
   /// 吸い込み処理を1箇所に集約（成功時に呼ばれる）
@@ -1209,6 +1084,14 @@ class _NowSheetState extends ConsumerState<NowSheet>
         '[NowSheet] _handleSubmit: SUCCESS sessionId=$submitSessionId',
       );
 
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('送信しました'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
       // submit成功直後に共通クリア処理を実行（Navigator操作に依存しない位置）
       _clearComposerAfterSuccess();
 
@@ -1369,6 +1252,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
           child: Container(
             key: _composerKey,
             padding: const EdgeInsets.all(24),
+            color: Colors.black,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1416,7 +1300,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
                                     fontWeight: FontWeight.w300,
                                     fontSize: 18,
                                     height: 1.8,
-                                    color: Colors.black87,
+                                    color: Colors.white,
                                   ),
                                   maxLines: null,
                                   maxLength: 140,
@@ -1435,7 +1319,7 @@ class _NowSheetState extends ConsumerState<NowSheet>
                                   decoration: const InputDecoration(
                                     // 命令的な言葉を消し、余白として機能させる
                                     hintText: '...',
-                                    hintStyle: TextStyle(color: Colors.black26),
+                                    hintStyle: TextStyle(color: Colors.white54),
                                     // 枠線を完全に排除
                                     border: InputBorder.none,
                                     focusedBorder: InputBorder.none,
@@ -1463,18 +1347,21 @@ class _NowSheetState extends ConsumerState<NowSheet>
                     child: Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
+                        border: Border.all(color: Colors.white54),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Row(
                         children: [
-                          const Text('届く日 '),
+                          const Text('届く日 ', style: TextStyle(color: Colors.white)),
                           Text(
                             FormatUtils.formatDate(selectedDate),
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                           const Spacer(),
-                          const Icon(Icons.calendar_today, size: 20),
+                          const Icon(Icons.calendar_today, size: 20, color: Colors.white),
                         ],
                       ),
                     ),
@@ -1492,6 +1379,8 @@ class _NowSheetState extends ConsumerState<NowSheet>
                               : null,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
+                            backgroundColor: Colors.white12,
+                            foregroundColor: Colors.white,
                           ),
                           child:
                               (_isSubmitting ||

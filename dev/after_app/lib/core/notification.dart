@@ -80,14 +80,7 @@ class NotificationService {
     }
 
     final openOn = message.openOn;
-    final notificationTime = tz.TZDateTime(
-      tz.local,
-      openOn.year,
-      openOn.month,
-      openOn.day,
-      9,
-      0,
-    );
+    final notificationTime = tz.TZDateTime.from(openOn, tz.local);
 
     if (notificationTime.isBefore(tz.TZDateTime.now(tz.local))) {
       return;
@@ -139,14 +132,10 @@ class NotificationService {
       return;
     }
 
-    final notificationTime = tz.TZDateTime(
-      tz.local,
-      date.year,
-      date.month,
-      date.day,
-      9,
-      0,
-    );
+    final earliest = messages
+        .map((m) => m.openOn)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    final notificationTime = tz.TZDateTime.from(earliest, tz.local);
 
     if (notificationTime.isBefore(tz.TZDateTime.now(tz.local))) {
       return;

@@ -132,6 +132,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 600),
               child: Material(
+                color: Colors.black,
                 borderRadius: BorderRadius.circular(16),
                 clipBehavior: Clip.antiAlias,
                 child: NowSheet(
@@ -151,10 +152,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       },
       transitionBuilder: (_, anim, __, child) {
         final fade = CurvedAnimation(parent: anim, curve: Curves.easeOut);
-        final scale = Tween<double>(begin: 0.98, end: 1.0).animate(fade);
         return FadeTransition(
           opacity: fade,
-          child: ScaleTransition(scale: scale, child: child),
+          child: child,
         );
       },
       transitionDuration: const Duration(milliseconds: 160),

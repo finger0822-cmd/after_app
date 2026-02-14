@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/format.dart';
 import 'after_controller.dart';
+import 'after_detail_page.dart';
 
 class AfterPage extends ConsumerStatefulWidget {
   const AfterPage({super.key});
@@ -42,7 +43,10 @@ class _AfterPageState extends ConsumerState<AfterPage> {
     final state = ref.watch(afterControllerProvider);
 
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
         title: const Text('After'),
         actions: [
           IconButton(
@@ -60,12 +64,14 @@ class _AfterPageState extends ConsumerState<AfterPage> {
                 controller: _searchController,
                 decoration: InputDecoration(
                   hintText: '検索',
+                  hintStyle: const TextStyle(color: Colors.white54),
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
-                    icon: const Icon(Icons.search),
+                    icon: const Icon(Icons.search, color: Colors.white),
                     onPressed: _performSearch,
                   ),
                 ),
+                style: const TextStyle(color: Colors.white),
                 onSubmitted: (_) => _performSearch(),
               ),
             ),
@@ -73,25 +79,29 @@ class _AfterPageState extends ConsumerState<AfterPage> {
             child: state.isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : state.messages.isEmpty
-                    ? const Center(child: Text('記録がありません'))
+                    ? const Center(
+                        child: Text(
+                          '記録がありません',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
                     : ListView.builder(
                         itemCount: state.messages.length,
                         itemBuilder: (context, index) {
                           final message = state.messages[index];
-                          final date = message.openedAt ?? message.createdAt;
                           return ListTile(
-                            title: Text(FormatUtils.formatDate(date)),
-                            subtitle: Text(
-                              message.text,
-                              style: const TextStyle(
-                                // 過去の言葉は少しだけ淡く、細く。
-                                fontWeight: FontWeight.w200,
-                                color: Colors.black54,
-                                fontSize: 16,
-                                height: 1.8,
-                              ),
+                            title: Text(
+                              FormatUtils.formatDate(message.createdAt),
+                              style: const TextStyle(color: Colors.white),
                             ),
-                            isThreeLine: false,
+                            trailing: const Icon(Icons.chevron_right, color: Colors.white54),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => AfterDetailPage(message: message),
+                                ),
+                              );
+                            },
                           );
                         },
                       ),
